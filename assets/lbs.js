@@ -12,7 +12,9 @@ const LBS = function (type){
         nowPos:[],
         radius:100,
         randomRaduis:300,
-        pitch:35,
+        pitch:35, // 地图仰角
+        errorR:'0.00001173', // 1M 经度误差
+        errorP:'0.000009', // 1M 纬度误差
         zoom:15,
         dotNum:20
     }
@@ -27,7 +29,7 @@ LBS.prototype.exec = async function(){
         try {
             await this.task.shift()(); // 顺序迭代
         } catch (error) {
-            this.notify( this.verbose.EXECERROR ,error)
+            this.notify(error)
         }
     }
 }
@@ -97,30 +99,30 @@ LBS.prototype.getPosition = function(){
     return this
 }
 
-LBS.prototype.addDotMarker= function(pos,ox = 0,oy = 0){
+LBS.prototype.addDot = function(pos,ox = 0,oy = 0){
     this.task.push(()=>{
-        return new Promise((resolve,reject)=>{
-            let site = pos || this.config.nowPos;
+        let site = pos || this.config.nowPos;
             let marker = new AMap.Marker({
                 icon: "http://a.amap.com/jsapi_demos/static/demo-center/icons/poi-marker-default.png", 
                 position: new AMap.LngLat(...site),
                 offset: new AMap.Pixel(ox, oy)
             });
-            this.map.add(marker);
-            resolve()
-        })
+        this.map.add(marker);
     })
     return this
 }
 
-LBS.prototype.install_plugins = function(...rest){
+LBS.prototype.install_plugins = function(...plugins){
     this.task.push(()=>{
         return new Promise((resolve,reject)=>{
-            AMap.plugin(rest,(err)=>{//异步同时加载多个插件
+            AMap.plugin(plugins.map(i=>`AMap.${i}`),(err)=>{ //异步同时加载多个插件
                 if(err){
-                    return reject()
+                    return reject('loaded or install plugin error')
                 }
-                this.map.addControl(new AMap.ToolBar());
+                plugins.forEach(item => {
+                    this.map.addControl(new AMap[item]());
+                });
+                console.log('install success....')
                 resolve()
             });
         })
@@ -130,48 +132,45 @@ LBS.prototype.install_plugins = function(...rest){
 
 LBS.prototype.addCircleArea = function(pos,radius,color,strokeColor,strokeWeight){
     this.task.push(()=>{
-        return new Promise((resolve,reject)=>{
-            var circle = new AMap.Circle({
-                center: pos || this.config.nowPos,
-                radius: this.config.radius, //半径
-                borderWeight: 3,
-                strokeColor: "#FF33FF", 
-                strokeOpacity: 1,
-                strokeWeight: 6,
-                strokeOpacity: 0.2,
-                fillOpacity: 0.4,
-                strokeStyle: 'dashed',
-                strokeDasharray: [10, 10], 
-                // 线样式还支持 'dashed'
-                fillColor: '#1791fc',
-                zIndex: 50,
-            })
-            circle.setMap(this.map)
-            // 缩放地图到合适的视野级别
-            this.map.setFitView([ circle ]);
-            resolve()
+        var circle = new AMap.Circle({
+            center: pos || this.config.nowPos,
+            radius: this.config.radius, //半径
+            borderWeight: 3,
+            strokeColor: "#FF33FF", 
+            strokeOpacity: 1,
+            strokeWeight: 6,
+            strokeOpacity: 0.2,
+            fillOpacity: 0.4,
+            strokeStyle: 'dashed',
+            strokeDasharray: [10, 10], 
+            // 线样式还支持 'dashed'
+            fillColor: '#1791fc',
+            zIndex: 50,
         })
+        circle.setMap(this.map)
+        // 缩放地图到合适的视野级别
+        this.map.setFitView([ circle ]);
     })
     return this
 }
 
-LBS.prototype.randomSpreadDots = function(){
+LBS.prototype.randomSpreadDots = function(num){
     this.task.push(()=>{
-        return new Promise((resolve,reject)=>{
-            let {dotNum,randomRaduis,nowPos} = this.config;
-            let arr = [];
-            function random(){
-                return ( ( Math.random() <= 0.5 ? -1 : 1 ) * Math.random() / zoom  ) * randomRaduis
-            }
-            for(;dotNum--;){
-                arr.push( random() , random() )
-            }
-            console.log(arr)
-            resolve()
-            /* let dis = AMap.GeometryUtil.distance(p1, p2); */
-        })
+        num = num || this.config.dotNum // 散播数量
+        for(;num--;){
+            this.addDot(this.randomRP()) // 随机布点
+        }
     })
     return this
+}
+
+/* 普通随机 */
+LBS.prototype.randomRP = function(raduis){
+    let { nowPos,errorP,errorR,randomRaduis } = this.config;
+    return [
+        nowPos[0] + ( Math.random() <= 0.5 ? -1 : 1 ) * Math.random() * errorR * (raduis || randomRaduis),
+        nowPos[1] + ( Math.random() <= 0.5 ? -1 : 1 ) * Math.random() * errorP * (raduis || randomRaduis)
+    ]
 }
 
 LBS.prototype.notify = function(...rest){
@@ -185,8 +184,20 @@ LBS.prototype.verbose = {
     GETNOWPOS:'获取当前定位信息失败',
     EXECERROR:'执行错误'
 }
+
+LBS.prototype.test = function(){
+    this.task.push(()=>{
+        var p1 = [116.434027, 39.941037];
+        var p2 = [116.461665 - this.config.rule, 39.941564 - - this.config.rule];
+        // 返回 p1 到 p2 间的地面距离，单位：米
+        var dis = AMap.GeometryUtil.distance(p1, p2);
+        console.log(dis);
+    })
+    return this
+}
 /* 主要逻辑顺序 */
 let lbs = LBS('2d');
-lbs.randomSpreadDots().exec()
-// lbs.install_plugins('AMap.ToolBar').getPosition().addCircleArea().exec()
+// lbs.randomSpreadDots().exec()
+lbs.install_plugins('ToolBar').getPosition().addCircleArea().randomSpreadDots().exec()
+
 /* lbs.getPosition().addMarkerBot().exec() */
